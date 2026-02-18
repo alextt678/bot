@@ -14,7 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "7078059729:AAG4JvDdzbHV-3ga-LfjEziTA7W3NMmgnZY"
 ADMIN_USERNAME = "JDD452"
-ADMIN_ID = 5138605368  # Твой числовой ID
+ADMIN_ID = 5138605368
 MEDIA_DIR = "temp_media"
 
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -165,6 +165,8 @@ class Database:
 
 db = Database()
 
+# ==================== ФУНКЦИИ ПРОВЕРКИ ====================
+
 def is_admin(username: str) -> bool:
     return username == ADMIN_USERNAME
 
@@ -177,6 +179,18 @@ async def check_bot_in_channel(channel_id: str) -> bool:
     except Exception as e:
         logging.error(f"Ошибка проверки канала {channel_id}: {e}")
         return False
+
+# ==================== ФУНКЦИИ АВТОУДАЛЕНИЯ ====================
+
+async def delete_message_after(chat_id: int, message_id: int, seconds: int = 10):
+    """Удаляет сообщение через указанное количество секунд"""
+    await asyncio.sleep(seconds)
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except:
+        pass
+
+# ==================== КЛАВИАТУРЫ ====================
 
 def get_start_keyboard(is_admin_user: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
@@ -236,6 +250,40 @@ def get_content_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="✅ Готово", callback_data="content_done")
     return builder.as_markup()
 
+def get_post_navigation_keyboard(post_id: int, total: int, post_data: Dict) -> InlineKeyboardMarkup:
+    """Клавиатура для навигации по постам с действиями"""
+    builder = InlineKeyboardBuilder()
+    
+    # Кнопки навигации
+    nav_row = []
+    if post_id > 1:
+        nav_row.append(InlineKeyboardButton(text="◀️", callback_data=f"nav_prev_{post_id}"))
+    nav_row.append(InlineKeyboardButton(text=f"{post_id}/{total}", callback_data="no_action"))
+    if post_id < total:
+        nav_row.append(InlineKeyboardButton(text="▶️", callback_data=f"nav_next_{post_id}"))
+    
+    if nav_row:
+        builder.row(*nav_row)
+    
+    # Кнопки действий
+    builder.row(
+        InlineKeyboardButton(text="✅ Одобрить", callback_data=f"nav_approve_{post_id}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"nav_reject_{post_id}")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="⏱️ 10 сек", callback_data=f"nav_10sec_{post_id}"),
+        InlineKeyboardButton(text="⏰ 10 мин", callback_data=f"nav_10min_{post_id}"),
+        InlineKeyboardButton(text="📅 Завтра", callback_data=f"nav_sched_{post_id}")
+    )
+    
+    builder.row(
+        InlineKeyboardButton(text="📋 К списку", callback_data="admin_queue"),
+        InlineKeyboardButton(text="🗑️ Удалить пост", callback_data=f"nav_delete_{post_id}")
+    )
+    
+    return builder.as_markup()
+
 def get_moderation_keyboard(post_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Одобрить", callback_data=f"approve_{post_id}")
@@ -251,8 +299,11 @@ def get_time_keyboard(post_id: int) -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
+# ==================== ХРАНИЛИЩЕ ВРЕМЕННЫХ ДАННЫХ ====================
 temp_posts = {}
 temp_channel_add = {}
+
+# ==================== ОБРАБОТЧИКИ КОМАНД ====================
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -278,6 +329,8 @@ async def cmd_clean(message: types.Message):
         return
     
     await message.answer("🧹 Меню очистки:", reply_markup=get_clean_keyboard())
+
+# ==================== УПРАВЛЕНИЕ ОЧИСТКОЙ ====================
 
 @dp.callback_query(F.data == "clean_menu")
 async def clean_menu(callback: CallbackQuery):
@@ -344,6 +397,8 @@ async def clean_stats(callback: CallbackQuery):
     
     await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=get_clean_keyboard())
     await callback.answer()
+
+# ==================== УПРАВЛЕНИЕ КАНАЛАМИ ====================
 
 @dp.callback_query(F.data == "manage_channels")
 async def manage_channels(callback: CallbackQuery):
@@ -498,10 +553,19 @@ async def back_to_admin(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=get_start_keyboard(True))
     await callback.answer()
 
+# ==================== ОБРАБОТЧИКИ ПОСТОВ ====================
+
 @dp.callback_query(F.data == "new_post")
 async def new_post(callback: CallbackQuery):
     await callback.answer()
     user_id = callback.from_user.id
+    
+    # Удаляем предыдущее сообщение с кнопками, если оно было
+    if user_id in temp_posts and temp_posts[user_id]['msg_id']:
+        try:
+            await bot.delete_message(user_id, temp_posts[user_id]['msg_id'])
+        except:
+            pass
     
     temp_posts[user_id] = {'content': [], 'msg_id': None}
     
@@ -539,9 +603,13 @@ async def content_done(callback: CallbackQuery):
     
     del temp_posts[user_id]
     
+    # Кнопка для повторной отправки
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="📤 Отправить ещё", callback_data="new_post")
+    
     await callback.message.edit_text(
-        "✅ Отправлено на проверку",
-        reply_markup=get_start_keyboard(is_admin(callback.from_user.username))
+        "✅ Отправлено на проверку!\n\nМожешь отправить ещё один пост 👇",
+        reply_markup=keyboard.as_markup()
     )
 
 @dp.message(F.photo | F.video | F.audio)
@@ -576,7 +644,9 @@ async def handle_media(message: types.Message):
     
     if content_item:
         temp_posts[user_id]['content'].append(content_item)
-        await message.reply(f"✅ Добавлено ({len(temp_posts[user_id]['content'])})")
+        reply_msg = await message.reply(f"✅ Добавлено ({len(temp_posts[user_id]['content'])})")
+        # Автоудаление через 3 секунды
+        asyncio.create_task(delete_message_after(reply_msg.chat.id, reply_msg.message_id, 3))
     
     if temp_posts[user_id]['msg_id']:
         try:
@@ -590,41 +660,191 @@ async def handle_media(message: types.Message):
     )
     temp_posts[user_id]['msg_id'] = msg.message_id
 
-@dp.callback_query(F.data.startswith("approve_"))
-async def approve_post(callback: CallbackQuery):
+# ==================== МОДЕРАЦИЯ И НАВИГАЦИЯ ====================
+
+@dp.callback_query(F.data == "admin_queue")
+async def show_queue(callback: CallbackQuery):
     if not is_admin(callback.from_user.username):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
-    post_id = int(callback.data.split("_")[1])
-    post = db.get_post(post_id)
+    pending = db.get_pending_posts()
     
+    if not pending:
+        await callback.message.edit_text(
+            "📭 Нет постов на модерации",
+            reply_markup=get_start_keyboard(True)
+        )
+        return
+    
+    # Сортируем по времени (новые сверху)
+    pending.sort(key=lambda x: x['created_at'], reverse=True)
+    
+    text = "📋 *Ожидают проверки:*\n\n"
+    builder = InlineKeyboardBuilder()
+    
+    for p in pending[:10]:  # Показываем только первые 10
+        channel_info = ""
+        if p.get('channel'):
+            for ch in db.channels:
+                if ch['id'] == p['channel']:
+                    channel_info = f" в {ch.get('title', ch['id'])[:10]}"
+                    break
+        
+        # Краткое описание
+        short_text = f"#{p['id']} @{p['username']}{channel_info} ({len(p['content'])} 📎)"
+        builder.row(InlineKeyboardButton(
+            text=short_text,
+            callback_data=f"view_post_{p['id']}"
+        ))
+    
+    if len(pending) > 10:
+        builder.row(InlineKeyboardButton(
+            text=f"📌 Ещё {len(pending) - 10} постов...",
+            callback_data="no_action"
+        ))
+    
+    builder.row(
+        InlineKeyboardButton(text="🧹 Очистить всё", callback_data="clean_menu"),
+        InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode='Markdown',
+        reply_markup=builder.as_markup()
+    )
+
+async def show_post_detail(callback: CallbackQuery, post_id: int):
+    """Показывает детали одного поста"""
+    post = db.get_post(post_id)
+    if not post:
+        await callback.answer("❌ Пост не найден", show_alert=True)
+        return
+    
+    pending = db.get_pending_posts()
+    total = len(pending)
+    
+    channel_info = ""
+    if post.get('channel'):
+        for ch in db.channels:
+            if ch['id'] == post['channel']:
+                channel_info = f" в {ch.get('title', ch['id'])}"
+                break
+    
+    text = f"📌 *Пост #{post_id}* из {total}\n"
+    text += f"👤 От: @{post['username']}{channel_info}\n"
+    text += f"📎 Файлов: {len(post['content'])}\n"
+    text += f"🕐 Создан: {post['created_at'][:16]}\n"
+    
+    if post['content'] and post['content'][0].get('caption'):
+        text += f"\n📝 Подпись: {post['content'][0]['caption']}"
+    
+    # Отправляем первый файл как превью
+    await callback.message.delete()
+    if post['content']:
+        item = post['content'][0]
+        if item['type'] == 'photo':
+            await bot.send_photo(
+                callback.from_user.id,
+                item['file_id'],
+                caption=text,
+                parse_mode='Markdown',
+                reply_markup=get_post_navigation_keyboard(post_id, total, post)
+            )
+        elif item['type'] == 'video':
+            await bot.send_video(
+                callback.from_user.id,
+                item['file_id'],
+                caption=text,
+                parse_mode='Markdown',
+                reply_markup=get_post_navigation_keyboard(post_id, total, post)
+            )
+        elif item['type'] == 'audio':
+            await bot.send_audio(
+                callback.from_user.id,
+                item['file_id'],
+                caption=text,
+                parse_mode='Markdown',
+                reply_markup=get_post_navigation_keyboard(post_id, total, post)
+            )
+
+@dp.callback_query(F.data.startswith("view_post_"))
+async def view_post(callback: CallbackQuery):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+    
+    post_id = int(callback.data.split("_")[2])
+    await show_post_detail(callback, post_id)
+
+@dp.callback_query(F.data.startswith("nav_"))
+async def navigation_handler(callback: CallbackQuery):
+    if not is_admin(callback.from_user.username):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+    
+    action = callback.data.split("_")[1]
+    post_id = int(callback.data.split("_")[2])
+    
+    pending = db.get_pending_posts()
+    post_ids = [p['id'] for p in pending]
+    
+    if action == "prev":
+        current_index = post_ids.index(post_id)
+        if current_index > 0:
+            await show_post_detail(callback, post_ids[current_index - 1])
+        else:
+            await callback.answer("Это первый пост", show_alert=True)
+    
+    elif action == "next":
+        current_index = post_ids.index(post_id)
+        if current_index < len(post_ids) - 1:
+            await show_post_detail(callback, post_ids[current_index + 1])
+        else:
+            await callback.answer("Это последний пост", show_alert=True)
+    
+    elif action == "approve":
+        await callback.message.delete()
+        # Запускаем процесс одобрения
+        await approve_post_logic(callback, post_id)
+    
+    elif action == "reject":
+        await reject_post_logic(callback, post_id)
+    
+    elif action == "delete":
+        db.delete_post(post_id)
+        await db.save()
+        await callback.answer("🗑️ Пост удалён", show_alert=True)
+        await show_queue(callback)
+    
+    elif action in ["10sec", "10min", "sched"]:
+        await callback.message.delete()
+        await set_time_logic(callback, post_id, action)
+
+async def approve_post_logic(callback: CallbackQuery, post_id: int):
+    post = db.get_post(post_id)
     if not post:
         await callback.answer("❌ Пост не найден", show_alert=True)
         return
     
     if not db.get_current_channel():
-        await callback.message.edit_text(
+        await bot.send_message(
+            callback.from_user.id,
             "⚠️ Сначала добавьте канал в управлении",
             reply_markup=get_start_keyboard(True)
         )
         return
     
-    await callback.message.edit_text(
-        f"⏱ Время публикации для поста #{post_id}\n"
-        f"Канал: {db.get_current_channel().get('title', db.current_channel)}",
+    # Отправляем сообщение с выбором времени
+    await bot.send_message(
+        callback.from_user.id,
+        f"⏱ Выбери время для поста #{post_id}:",
         reply_markup=get_time_keyboard(post_id)
     )
 
-@dp.callback_query(F.data.startswith("reject_"))
-async def reject_post(callback: CallbackQuery):
-    if not is_admin(callback.from_user.username):
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-    
-    post_id = int(callback.data.split("_")[1])
+async def reject_post_logic(callback: CallbackQuery, post_id: int):
     post = db.get_post(post_id)
-    
     if post:
         try:
             await bot.send_message(
@@ -637,21 +857,13 @@ async def reject_post(callback: CallbackQuery):
         db.delete_post(post_id)
         await db.save()
     
-    await callback.message.edit_text(
+    await bot.send_message(
+        callback.from_user.id,
         "❌ Пост отклонён",
         reply_markup=get_start_keyboard(True)
     )
 
-@dp.callback_query(F.data.startswith("time_"))
-async def set_time(callback: CallbackQuery):
-    if not is_admin(callback.from_user.username):
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-    
-    parts = callback.data.split("_")
-    time_type = parts[1]
-    post_id = int(parts[2])
-    
+async def set_time_logic(callback: CallbackQuery, post_id: int, time_type: str):
     now = datetime.now()
     scheduled = None
     
@@ -659,7 +871,7 @@ async def set_time(callback: CallbackQuery):
         scheduled = (now + timedelta(seconds=10)).isoformat()
     elif time_type == "10min":
         scheduled = (now + timedelta(minutes=10)).isoformat()
-    elif time_type == "schedule":
+    elif time_type == "sched":
         tomorrow = now + timedelta(days=1)
         scheduled = tomorrow.replace(hour=6, minute=0, second=0).isoformat()
     
@@ -677,204 +889,4 @@ async def set_time(callback: CallbackQuery):
             pass
     
     channel = db.get_current_channel()
-    channel_name = channel.get('title', db.current_channel) if channel else "канал"
-    
-    await callback.message.edit_text(
-        f"✅ Пост #{post_id} добавлен в очередь\n"
-        f"📢 Канал: {channel_name}",
-        reply_markup=get_start_keyboard(True)
-    )
-
-@dp.callback_query(F.data == "admin_queue")
-async def show_queue(callback: CallbackQuery):
-    if not is_admin(callback.from_user.username):
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-    
-    pending = db.get_pending_posts()
-    
-    if not pending:
-        await callback.message.edit_text(
-            "📭 Нет постов на модерации",
-            reply_markup=get_start_keyboard(True)
-        )
-        return
-    
-    text = "📋 Ожидают проверки:\n\n"
-    for p in pending:
-        channel_info = ""
-        if p.get('channel'):
-            for ch in db.channels:
-                if ch['id'] == p['channel']:
-                    channel_info = f" в {ch.get('title', ch['id'])}"
-                    break
-        
-        text += f"#{p['id']} от @{p['username']}{channel_info}\n"
-        text += f"📎 {len(p['content'])} файлов\n"
-        text += f"🕐 {p['created_at'][:16]}\n\n"
-    
-    await callback.message.edit_text(text, reply_markup=get_start_keyboard(True))
-
-@dp.callback_query(F.data == "admin_stats")
-async def show_stats(callback: CallbackQuery):
-    if not is_admin(callback.from_user.username):
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-    
-    stats = db.get_stats()
-    
-    text = "📊 *Статистика:*\n\n"
-    text += f"📝 Всего постов: {stats['total']}\n"
-    text += f"⏳ На модерации: {stats['pending']}\n"
-    text += f"✅ Одобрено: {stats['approved']}\n"
-    text += f"📢 Опубликовано: {stats['published']}\n"
-    text += f"\n📢 Каналов: {len(db.channels)}\n"
-    
-    current = db.get_current_channel()
-    current_name = current.get('title', db.current_channel) if current else "не выбран"
-    text += f"📍 Текущий: {current_name}"
-    
-    await callback.message.edit_text(text, parse_mode='Markdown', reply_markup=get_start_keyboard(True))
-    await callback.answer()
-
-@dp.callback_query(F.data == "no_action")
-async def no_action(callback: CallbackQuery):
-    await callback.answer()
-
-async def send_to_admin(post_id: int, content: List[Dict], username: str, is_admin: bool = False):
-    current_channel = db.get_current_channel()
-    channel_text = f" для {current_channel.get('title', db.current_channel)}" if current_channel else ""
-    
-    for item in content:
-        if item['type'] == 'photo':
-            await bot.send_photo(
-                ADMIN_ID,  # ← ИСПРАВЛЕНО: теперь используем числовой ID
-                item['file_id'],
-                caption=f"Пост #{post_id} от @{username}{channel_text}"
-            )
-        elif item['type'] == 'video':
-            await bot.send_video(
-                ADMIN_ID,  # ← ИСПРАВЛЕНО
-                item['file_id'],
-                caption=f"Пост #{post_id} от @{username}{channel_text}"
-            )
-        elif item['type'] == 'audio':
-            await bot.send_audio(
-                ADMIN_ID,  # ← ИСПРАВЛЕНО
-                item['file_id'],
-                caption=f"Пост #{post_id} от @{username}{channel_text}"
-            )
-    
-    await bot.send_message(
-        ADMIN_ID,  # ← ИСПРАВЛЕНО
-        f"🔍 Пост #{post_id}{channel_text}:",
-        reply_markup=get_moderation_keyboard(post_id)
-    )
-
-async def publish_post(post: Dict):
-    channel_id = post.get('channel')
-    if not channel_id:
-        logging.error(f"Пост #{post['id']} без канала")
-        return
-    
-    try:
-        for item in post['content']:
-            if item['type'] == 'photo':
-                await bot.send_photo(channel_id, item['file_id'])
-            elif item['type'] == 'video':
-                await bot.send_video(channel_id, item['file_id'])
-            elif item['type'] == 'audio':
-                await bot.send_audio(channel_id, item['file_id'])
-        
-        await bot.send_message(
-            channel_id,
-            f"✍️ Автор: @{post['username']}"
-        )
-        
-        db.mark_published(post['id'])
-        await db.save()
-        
-        channel = db.get_current_channel()
-        channel_name = channel.get('title', channel_id) if channel else channel_id
-        await bot.send_message(
-            ADMIN_ID,  # ← ИСПРАВЛЕНО
-            f"✅ Пост #{post['id']} опубликован в {channel_name}"
-        )
-        
-    except Exception as e:
-        logging.error(f"Ошибка публикации поста #{post['id']}: {e}")
-        await bot.send_message(
-            ADMIN_ID,  # ← ИСПРАВЛЕНО
-            f"❌ Ошибка публикации поста #{post['id']} в канале {channel_id}\n{e}"
-        )
-
-async def scheduler():
-    while True:
-        now = datetime.now()
-        
-        try:
-            for post in db.posts:
-                if (post['status'] == 'approved' and 
-                    post.get('scheduled_time') and
-                    datetime.fromisoformat(post['scheduled_time']) <= now):
-                    await publish_post(post)
-            
-            if now.hour == 6 and now.minute == 0:
-                next_post = db.get_next_post()
-                if next_post and not next_post.get('scheduled_time'):
-                    await publish_post(next_post)
-            
-            if now.hour == 3 and now.minute == 0:
-                before = len(db.posts)
-                db.clean_old_posts(30)
-                after = len(db.posts)
-                await bot.send_message(
-                    ADMIN_ID,  # ← ИСПРАВЛЕНО
-                    f"🧹 Автоматическая очистка выполнена\n"
-                    f"Удалено записей: {before - after}\n"
-                    f"Осталось: {after}"
-                )
-                await db.save()
-        
-        except Exception as e:
-            logging.error(f"Ошибка в планировщике: {e}")
-        
-        await asyncio.sleep(60)
-
-async def on_startup():
-    os.makedirs(MEDIA_DIR, exist_ok=True)
-    asyncio.create_task(scheduler())
-    
-    channels = db.get_channels_list()
-    if channels:
-        current = db.get_current_channel()
-        current_name = current.get('title', db.current_channel) if current else 'не выбран'
-        stats = db.get_stats()
-        
-        await bot.send_message(
-            ADMIN_ID,  # ← ИСПРАВЛЕНО
-            f"🚀 Бот запущен\n"
-            f"📢 Каналов: {len(channels)}\n"
-            f"✅ Текущий: {current_name}\n"
-            f"📊 Записей в БД: {stats['total']}"
-        )
-    else:
-        await bot.send_message(
-            ADMIN_ID,  # ← ИСПРАВЛЕНО
-            "🚀 Бот запущен\n"
-            "⚠️ Каналы не добавлены. Перейдите в Управление каналами."
-        )
-    
-    logging.info("Бот запущен")
-
-async def on_shutdown():
-    await db.save()
-    logging.info("Бот остановлен")
-
-async def main():
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    channel_name = channel.get
