@@ -14,6 +14,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ==================== КОНФИГУРАЦИЯ ====================
 BOT_TOKEN = "7078059729:AAG4JvDdzbHV-3ga-LfjEziTA7W3NMmgnZY"
 ADMIN_USERNAME = "JDD452"
+ADMIN_ID = 5138605368  # Твой числовой ID
 MEDIA_DIR = "temp_media"
 
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -747,25 +748,25 @@ async def send_to_admin(post_id: int, content: List[Dict], username: str, is_adm
     for item in content:
         if item['type'] == 'photo':
             await bot.send_photo(
-                ADMIN_USERNAME,
+                ADMIN_ID,  # ← ИСПРАВЛЕНО: теперь используем числовой ID
                 item['file_id'],
                 caption=f"Пост #{post_id} от @{username}{channel_text}"
             )
         elif item['type'] == 'video':
             await bot.send_video(
-                ADMIN_USERNAME,
+                ADMIN_ID,  # ← ИСПРАВЛЕНО
                 item['file_id'],
                 caption=f"Пост #{post_id} от @{username}{channel_text}"
             )
         elif item['type'] == 'audio':
             await bot.send_audio(
-                ADMIN_USERNAME,
+                ADMIN_ID,  # ← ИСПРАВЛЕНО
                 item['file_id'],
                 caption=f"Пост #{post_id} от @{username}{channel_text}"
             )
     
     await bot.send_message(
-        ADMIN_USERNAME,
+        ADMIN_ID,  # ← ИСПРАВЛЕНО
         f"🔍 Пост #{post_id}{channel_text}:",
         reply_markup=get_moderation_keyboard(post_id)
     )
@@ -796,14 +797,14 @@ async def publish_post(post: Dict):
         channel = db.get_current_channel()
         channel_name = channel.get('title', channel_id) if channel else channel_id
         await bot.send_message(
-            ADMIN_USERNAME,
+            ADMIN_ID,  # ← ИСПРАВЛЕНО
             f"✅ Пост #{post['id']} опубликован в {channel_name}"
         )
         
     except Exception as e:
         logging.error(f"Ошибка публикации поста #{post['id']}: {e}")
         await bot.send_message(
-            ADMIN_USERNAME,
+            ADMIN_ID,  # ← ИСПРАВЛЕНО
             f"❌ Ошибка публикации поста #{post['id']} в канале {channel_id}\n{e}"
         )
 
@@ -828,7 +829,7 @@ async def scheduler():
                 db.clean_old_posts(30)
                 after = len(db.posts)
                 await bot.send_message(
-                    ADMIN_USERNAME,
+                    ADMIN_ID,  # ← ИСПРАВЛЕНО
                     f"🧹 Автоматическая очистка выполнена\n"
                     f"Удалено записей: {before - after}\n"
                     f"Осталось: {after}"
@@ -851,7 +852,7 @@ async def on_startup():
         stats = db.get_stats()
         
         await bot.send_message(
-            ADMIN_USERNAME,
+            ADMIN_ID,  # ← ИСПРАВЛЕНО
             f"🚀 Бот запущен\n"
             f"📢 Каналов: {len(channels)}\n"
             f"✅ Текущий: {current_name}\n"
@@ -859,7 +860,7 @@ async def on_startup():
         )
     else:
         await bot.send_message(
-            5138605368,
+            ADMIN_ID,  # ← ИСПРАВЛЕНО
             "🚀 Бот запущен\n"
             "⚠️ Каналы не добавлены. Перейдите в Управление каналами."
         )
